@@ -10,16 +10,31 @@
 #include "usb_descriptors.h"
 
 #include "hardware/spi.h"
+#include "PMW3360_Firmware.h"
 
 #define PICO_ENTER_USB_BOOT_ON_EXIT 0
 #define DT 6 //encoder pin
 #define CLK 7 //encoder pin
 
+/////PMW3360 setup
 #define PIN_SCK 2
 #define PIN_MOSI 3
 #define PIN_MISO 4
 #define PIN_CS 5
 #define SPI_PORT spi0
+
+#define DELTA_X_L 0x03
+#define DELTA_X_H 0x04
+#define DELTA_Y_L 0x05
+#define DELTA_Y_H 0x06
+
+#define REST_EN_BIT_0 0x0//0b00000000 //sets the Rest_En bit of the config_2 register to 0
+                      //..^.....
+
+#define CONFIG_2 0x10         // address of Config_2 register
+#define SROM_ENABLE 0x13      // address of SROM_Enable register
+#define SROM_LOAD_BURST 0x62  // address of SROM_Load_Burst register
+#define SROM_ID 0x2A          // address of SROM_ID register
 
 volatile int knobDelta = 0;
 static int8_t wheel_multiplier = 1;
@@ -85,8 +100,33 @@ if(gpio_get_irq_event_mask(CLK) & GPIO_IRQ_EDGE_RISE){
   gpio_acknowledge_irq(DT, gpio_get_irq_event_mask(DT));
   gpio_acknowledge_irq(CLK, gpio_get_irq_event_mask(CLK));
 }
+static inline void read_reg(uint8_t reg, uint8_t *data);
+static inline void write_reg(uint8_t reg, uint8_t *data);
+static inline void pmw3360_delay(void);
+
+uint8_t read_motion();
+
+void PMW3360_init();
+
 int main(){
   board_init();
+
+  //init spi
+  sleep_ms(10);
+  spi_init(spi0, 19200);
+  spi_set_format(spi0,8,SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
+  gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+  gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+  gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
+  gpio_set_function(PIN_CS, GPIO_FUNC_SPI);
+
+  // initialise chip select as driven-high
+  gpio_init(PIN_CS);
+  gpio_set_dir(PIN_CS, GPIO_OUT);
+  gpio_put(PIN_CS, 1);
+  sleep_ms(10);
+
+  PMW3360_init();
 
   // init device stack on configured roothub port
   tud_init(BOARD_TUD_RHPORT);
@@ -113,8 +153,113 @@ int main(){
       tud_hid_report(REPORT_ID_MOUSE,&wheel_report,sizeof(wheel_report));
       knobDelta = 0;
     }
+    uint8_t motion = read_motion();
+    if(motion != 0){
+      printf("motion detected!!\n");
+      motion = 0x0;
+    }
 //    sleep_ms(100);
   }
+}
+
+void PMW3360_init(){
+  //sensor boot
+  uint8_t data;
+  uint8_t reg;
+
+  gpio_put(PIN_CS, 0);
+  sleep_ms(10);
+  gpio_put(PIN_CS, 1);
+  data = 0x5A;
+  write_reg(0x3A, &data); //write 0x5A to POWER_UP_RESET register
+  sleep_ms(55);
+  read_reg(0x02, &data);
+  sleep_us(20);
+  read_reg(0x03, &data);
+  sleep_us(20);
+  read_reg(0x04, &data);
+  sleep_us(20);
+  read_reg(0x05, &data);
+  sleep_us(20);
+  read_reg(0x06, &data);
+  sleep_us(20);
+
+  read_reg(0x00, &data); // read chip ID
+  sleep_us(20);
+  printf("chip ID is:0x%02x\n", data);
+
+  //load SROM Firmware
+  uint8_t REST_Enable_Value = REST_EN_BIT_0;
+  write_reg(CONFIG_2, &REST_Enable_Value);
+  uint8_t SROM_Enable_Value = 0x1d;
+  write_reg(SROM_ENABLE,&SROM_Enable_Value);
+  sleep_ms(10);
+  SROM_Enable_Value = 0x18;
+  write_reg(SROM_ENABLE, &SROM_Enable_Value);
+
+  gpio_put(PIN_CS, 0);
+  pmw3360_delay();
+  uint8_t SROM_Load_Burst_Register = SROM_LOAD_BURST | 0x80;
+  spi_write_blocking(spi0, &SROM_Load_Burst_Register, 1);
+  sleep_us(20);
+  for(int i=0; i < firmware_length; i++){
+    // raw spi write
+    spi_write_blocking(spi0, &firmware_data[i], 1);
+    sleep_us(20);
+  }
+  gpio_put(PIN_CS, 1);
+  sleep_us(1);
+  sleep_us(250);
+
+  write_reg(CONFIG_2,&REST_Enable_Value);
+  sleep_ms(10);
+  uint8_t SROM_ID_Value = 0x7;
+  read_reg(SROM_ID, &SROM_ID_Value);
+  printf("SROM_ID:0x%02x\n", SROM_ID_Value);
+}
+
+static inline void read_reg(uint8_t reg, uint8_t *data){
+  gpio_put(PIN_CS, 0);
+  pmw3360_delay();
+  spi_write_blocking(spi0, &reg, 1);
+  busy_wait_us(160);
+  spi_read_blocking(spi0, 0, data, 1);
+  pmw3360_delay();
+  gpio_put(PIN_CS, 1);
+}
+static inline void write_reg(uint8_t reg, uint8_t *data){
+  gpio_put(PIN_CS, 0);
+  uint8_t Buffer[2];
+  Buffer[0] = reg | 0b10000000;
+  Buffer[1] = *data;
+  pmw3360_delay();
+  spi_write_blocking(spi0, Buffer, 2);
+  pmw3360_delay();
+  gpio_put(PIN_CS, 1);
+}
+static inline void pmw3360_delay(void){
+   asm volatile(
+    "nop\n\t nop\n\t nop\n\t nop\n\t nop\n\t"
+    "nop\n\t nop\n\t nop\n\t nop\n\t nop\n\t"
+    "nop\n\t nop\n\t nop\n\t nop\n\t nop\n\t"
+    "nop\n\t"
+    ::: "memory");
+}
+uint8_t read_motion(){
+  uint8_t reg = 0x02;
+  uint8_t motion_bit = 0x00;
+  uint8_t data = 0x00;
+  write_reg(reg, &motion_bit);
+  read_reg(reg, &motion_bit);
+  if(motion_bit & 0b10000000){
+    read_reg(DELTA_X_L, &data);
+    read_reg(DELTA_X_H, &data);
+    read_reg(DELTA_Y_L, &data);
+    read_reg(DELTA_Y_H, &data);
+  }else{
+    motion_bit = 0x00;
+  }
+  return motion_bit;
 }
 
 void USB0_IRQHandler(void) {
