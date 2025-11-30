@@ -75,6 +75,7 @@ uint8_t const * tud_descriptor_device_cb(void)
 //--------------------------------------------------------------------+
 // HID Report Descriptor
 //--------------------------------------------------------------------+
+/*
 uint8_t const desc_hid_report[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x02,        // Usage (Mouse)
@@ -101,6 +102,61 @@ uint8_t const desc_hid_report[] = {
     0x81, 0x06,        // Input (Data,Var,Rel)
 
     0xC0               // End Collection
+};*/
+
+uint8_t const desc_hid_report[] = {
+    0x05, 0x01,                    // Usage Page (Generic Desktop)
+    0x09, 0x02,                    // Usage (Mouse)
+    0xA1, 0x01,                    // Collection (Application)
+
+    0x85, 0x02,                    // Report ID (2)   ← changed so host re-parses immediately
+
+    // Buttons (8 buttons)
+    0x05, 0x09,                    // Usage Page (Button)
+    0x19, 0x01,                    // Usage Minimum (Button 1)
+    0x29, 0x08,                    // Usage Maximum (Button 8)
+    0x15, 0x00,                    // Logical Minimum (0)
+     0x25, 0x01,                    // Logical Maximum (1)
+    0x95, 0x08,                    // Report Count (8)
+    0x75, 0x01,                    // Report Size (1)
+    0x81, 0x02,                    // Input (Data,Var,Abs)
+
+    // X and Y — 16-bit signed
+    0x05, 0x01,                    // Usage Page (Generic Desktop)
+    0x09, 0x30,                    // Usage (X)
+    0x09, 0x31,                    // Usage (Y)
+    0x16, 0x01, 0x80,              // Logical Minimum (-32767)
+    0x26, 0xFF, 0x7F,              // Logical Maximum (+32767)
+    0x75, 0x10,                    // Report Size (16)
+    0x95, 0x02,                    // Report Count (2)
+    0x81, 0x06,                    // Input (Data,Var,Rel)
+
+    // Wheel — 8-bit signed
+    0x05, 0x01,                    // Usage Page (Generic Desktop)
+    0x09, 0x38,                    // Usage (Wheel)
+    0x15, 0x81,                    // Logical Minimum (-127)
+    0x25, 0x7F,                    // Logical Maximum (127)
+    0x75, 0x08,                    // Report Size (8)
+    0x95, 0x01,                    // Report Count (1)
+    0x81, 0x06,                    // Input (Data,Var,Rel)
+
+    // Your resolution multiplier — 4-bit feature, exactly as you had it
+    0x05, 0x01,                    // Usage Page (Generic Desktop)
+    0x09, 0x48,                    // Usage (Resolution Multiplier)
+    0x15, 0x00,                    // Logical Minimum (0)
+    0x25, 0x0E,                    // Logical Maximum (14)   → 0–14 = 1×…15×
+    0x35, 0x01,                    // Physical Minimum (1)
+    0x45, 0x0F,                    // Physical Maximum (15)
+    0x75, 0x04,                    // Report Size (4)
+    0x95, 0x01,                    // Report Count (1)
+    0xB1, 0x02,                    // Feature (Data,Var,Abs)
+
+    // 4-bit padding to align to byte boundary
+    0x75, 0x04,                    // Report Size (4)
+    0x95, 0x01,                    // Report Count (1)
+    0xB1, 0x01,                    // Feature (Constant)  ← padding
+
+    0xC0                           // End Collection
 };
 
 // Invoked when received GET HID REPORT DESCRIPTOR

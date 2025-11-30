@@ -41,14 +41,19 @@ static int8_t wheel_multiplier = 1;
 
 typedef struct TU_ATTR_PACKED {
   uint8_t buttons;
-  int8_t x;
-  int8_t y;
+  int16_t x;
+  int16_t y;
   int8_t wheel;
 } mouse_report_t;
 
 typedef struct TU_ATTR_PACKED {
   int8_t wheel;
 } wheel_report_t;
+
+typedef struct {
+  uint16_t x;
+  uint16_t y;
+}Delta_xy;
 
 void knob_init(){
   gpio_init(DT);
@@ -104,7 +109,7 @@ static inline void read_reg(uint8_t reg, uint8_t *data);
 static inline void write_reg(uint8_t reg, uint8_t *data);
 static inline void pmw3360_delay(void);
 
-uint8_t read_motion();
+uint8_t read_motion(Delta_xy *delta);
 
 void PMW3360_init();
 
@@ -144,20 +149,23 @@ int main(){
   gpio_set_irq_enabled(CLK, GPIO_IRQ_EDGE_RISE, true); //enables interrupts for gpio CLK
   irq_set_enabled(IO_IRQ_BANK0, true);
 
-  int i = 10;
   while(1){
     tud_task();
-    if(tud_hid_ready() && knobDelta != 0){
-      wheel_report_t wheel_report = {0};
-      wheel_report.wheel = (int8_t)knobDelta;
-      tud_hid_report(REPORT_ID_MOUSE,&wheel_report,sizeof(wheel_report));
-      knobDelta = 0;
+    Delta_xy delta;
+    uint8_t motion = read_motion(&delta);
+    if(motion){
+      printf("x:%d, y:%d\n", (int16_t)delta.x, (int16_t)delta.y);
     }
-    uint8_t motion = read_motion();
-    if(motion != 0){
-      printf("motion detected!!\n");
+    mouse_report_t mouse_report = {0};
+    if(tud_hid_ready() && (knobDelta || motion)){
+      mouse_report.wheel = (int8_t)knobDelta;
+      mouse_report.x = (int16_t)delta.x;
+      mouse_report.y = (int16_t)delta.y;
+      tud_hid_report(/*REPORT_ID_MOUSE*/2,&mouse_report,sizeof(mouse_report_t));
+      knobDelta = 0;
       motion = 0x0;
     }
+    
 //    sleep_ms(100);
   }
 }
@@ -245,17 +253,26 @@ static inline void pmw3360_delay(void){
     "nop\n\t"
     ::: "memory");
 }
-uint8_t read_motion(){
+uint8_t read_motion(Delta_xy *delta){
   uint8_t reg = 0x02;
   uint8_t motion_bit = 0x00;
   uint8_t data = 0x00;
+  uint16_t delta_x = 0x0;
+  uint16_t delta_y = 0x0;
   write_reg(reg, &motion_bit);
   read_reg(reg, &motion_bit);
   if(motion_bit & 0b10000000){
-    read_reg(DELTA_X_L, &data);
+    uint8_t delta_L;
+    read_reg(DELTA_X_L, (uint8_t *)&delta_x);
     read_reg(DELTA_X_H, &data);
-    read_reg(DELTA_Y_L, &data);
+    delta_x = (delta_x & 0xFF) | ((uint16_t)data << 8);
+    read_reg(DELTA_Y_L, (uint8_t *)&delta_y);
     read_reg(DELTA_Y_H, &data);
+    delta_y = (delta_y & 0xFF) | ((uint16_t)data << 8);
+
+    delta->x = delta_x;
+    delta->y= delta_y;
+
   }else{
     motion_bit = 0x00;
   }
