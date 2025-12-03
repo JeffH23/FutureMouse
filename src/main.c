@@ -151,7 +151,7 @@ int main(){
 
   while(1){
     tud_task();
-    Delta_xy delta;
+    Delta_xy delta = {0};
     uint8_t motion = read_motion(&delta);
     if(motion){
       printf("x:%d, y:%d\n", (int16_t)delta.x, (int16_t)delta.y);
